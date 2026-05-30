@@ -1,0 +1,134 @@
+{
+  "ver": "1.0.27",
+  "importer": "image",
+  "imported": true,
+  "uuid": "fdb043c6-2541-438b-af2c-74434247bc9b",
+  "files": [
+    ".json",
+    ".png"
+  ],
+  "subMetas": {
+    "6c48a": {
+      "importer": "texture",
+      "uuid": "fdb043c6-2541-438b-af2c-74434247bc9b@6c48a",
+      "displayName": "美式咖啡图标",
+      "id": "6c48a",
+      "name": "texture",
+      "userData": {
+        "wrapModeS": "clamp-to-edge",
+        "wrapModeT": "clamp-to-edge",
+        "imageUuidOrDatabaseUri": "fdb043c6-2541-438b-af2c-74434247bc9b",
+        "isUuid": true,
+        "visible": false,
+        "minfilter": "linear",
+        "magfilter": "linear",
+        "mipfilter": "none",
+        "anisotropy": 0
+      },
+      "ver": "1.0.22",
+      "imported": true,
+      "files": [
+        ".json"
+      ],
+      "subMetas": {}
+    },
+    "f9941": {
+      "importer": "sprite-frame",
+      "uuid": "fdb043c6-2541-438b-af2c-74434247bc9b@f9941",
+      "displayName": "美式咖啡图标",
+      "id": "f9941",
+      "name": "spriteFrame",
+      "userData": {
+        "trimThreshold": 1,
+        "rotated": false,
+        "offsetX": 16,
+        "offsetY": -1.5,
+        "trimX": 98,
+        "trimY": 43,
+        "width": 438,
+        "height": 436,
+        "rawWidth": 602,
+        "rawHeight": 519,
+        "borderTop": 0,
+        "borderBottom": 0,
+        "borderLeft": 0,
+        "borderRight": 0,
+        "packable": true,
+        "pixelsToUnit": 100,
+        "pivotX": 0.5,
+        "pivotY": 0.5,
+        "meshType": 0,
+        "vertices": {
+          "rawPosition": [
+            -219,
+            -218,
+            0,
+            219,
+            -218,
+            0,
+            -219,
+            218,
+            0,
+            219,
+            218,
+            0
+          ],
+          "indexes": [
+            0,
+            1,
+            2,
+            2,
+            1,
+            3
+          ],
+          "uv": [
+            98,
+            476,
+            536,
+            476,
+            98,
+            40,
+            536,
+            40
+          ],
+          "nuv": [
+            0.16279069767441862,
+            0.07707129094412331,
+            0.8903654485049833,
+            0.07707129094412331,
+            0.16279069767441862,
+            0.9171483622350675,
+            0.8903654485049833,
+            0.9171483622350675
+          ],
+          "minPos": [
+            -219,
+            -218,
+            0
+          ],
+          "maxPos": [
+            219,
+            218,
+            0
+          ]
+        },
+        "isUuid": true,
+        "imageUuidOrDatabaseUri": "fdb043c6-2541-438b-af2c-74434247bc9b@6c48a",
+        "atlasUuid": "",
+        "trimType": "auto"
+      },
+      "ver": "1.0.12",
+      "imported": true,
+      "files": [
+        ".json"
+      ],
+      "subMetas": {}
+    }
+  },
+  "userData": {
+    "type": "sprite-frame",
+    "fixAlphaTransparencyArtifacts": false,
+    "hasAlpha": true,
+    "redirect": "fdb043c6-2541-438b-af2c-74434247bc9b@6c48a"
+  }
+}

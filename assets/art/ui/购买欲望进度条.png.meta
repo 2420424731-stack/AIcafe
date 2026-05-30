@@ -1,0 +1,134 @@
+{
+  "ver": "1.0.27",
+  "importer": "image",
+  "imported": true,
+  "uuid": "6d90d704-087f-4a60-8d63-d51f1ff7a9f3",
+  "files": [
+    ".json",
+    ".png"
+  ],
+  "subMetas": {
+    "6c48a": {
+      "importer": "texture",
+      "uuid": "6d90d704-087f-4a60-8d63-d51f1ff7a9f3@6c48a",
+      "displayName": "购买欲望进度条",
+      "id": "6c48a",
+      "name": "texture",
+      "userData": {
+        "wrapModeS": "clamp-to-edge",
+        "wrapModeT": "clamp-to-edge",
+        "imageUuidOrDatabaseUri": "6d90d704-087f-4a60-8d63-d51f1ff7a9f3",
+        "isUuid": true,
+        "visible": false,
+        "minfilter": "linear",
+        "magfilter": "linear",
+        "mipfilter": "none",
+        "anisotropy": 0
+      },
+      "ver": "1.0.22",
+      "imported": true,
+      "files": [
+        ".json"
+      ],
+      "subMetas": {}
+    },
+    "f9941": {
+      "importer": "sprite-frame",
+      "uuid": "6d90d704-087f-4a60-8d63-d51f1ff7a9f3@f9941",
+      "displayName": "购买欲望进度条",
+      "id": "f9941",
+      "name": "spriteFrame",
+      "userData": {
+        "trimThreshold": 1,
+        "rotated": false,
+        "offsetX": -2.5,
+        "offsetY": 4,
+        "trimX": 28,
+        "trimY": 26,
+        "width": 935,
+        "height": 160,
+        "rawWidth": 996,
+        "rawHeight": 220,
+        "borderTop": 0,
+        "borderBottom": 0,
+        "borderLeft": 0,
+        "borderRight": 0,
+        "packable": true,
+        "pixelsToUnit": 100,
+        "pivotX": 0.5,
+        "pivotY": 0.5,
+        "meshType": 0,
+        "vertices": {
+          "rawPosition": [
+            -467.5,
+            -80,
+            0,
+            467.5,
+            -80,
+            0,
+            -467.5,
+            80,
+            0,
+            467.5,
+            80,
+            0
+          ],
+          "indexes": [
+            0,
+            1,
+            2,
+            2,
+            1,
+            3
+          ],
+          "uv": [
+            28,
+            194,
+            963,
+            194,
+            28,
+            34,
+            963,
+            34
+          ],
+          "nuv": [
+            0.028112449799196786,
+            0.15454545454545454,
+            0.9668674698795181,
+            0.15454545454545454,
+            0.028112449799196786,
+            0.8818181818181818,
+            0.9668674698795181,
+            0.8818181818181818
+          ],
+          "minPos": [
+            -467.5,
+            -80,
+            0
+          ],
+          "maxPos": [
+            467.5,
+            80,
+            0
+          ]
+        },
+        "isUuid": true,
+        "imageUuidOrDatabaseUri": "6d90d704-087f-4a60-8d63-d51f1ff7a9f3@6c48a",
+        "atlasUuid": "",
+        "trimType": "auto"
+      },
+      "ver": "1.0.12",
+      "imported": true,
+      "files": [
+        ".json"
+      ],
+      "subMetas": {}
+    }
+  },
+  "userData": {
+    "type": "sprite-frame",
+    "fixAlphaTransparencyArtifacts": false,
+    "hasAlpha": true,
+    "redirect": "6d90d704-087f-4a60-8d63-d51f1ff7a9f3@6c48a"
+  }
+}
