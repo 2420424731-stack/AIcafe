@@ -1,8 +1,9 @@
 import { _decorator, Component } from 'cc';
 import { GameManager } from './GameManager';
 import { EventBus, GameEvent } from './EventBus';
-import { CustomerData, getUnlockedCustomers } from '../data/CustomerData';
+import { CustomerData, CustomerPersonality, getUnlockedCustomers } from '../data/CustomerData';
 import { SkillId } from '../data/SkillData';
+import { AchievementId } from '../data/AchievementData';
 
 const { ccclass, property } = _decorator;
 
@@ -45,6 +46,8 @@ export class DayManager extends Component {
         this.reputationDelta = 0;
         game.startBusiness();
         this.nextCustomer();
+
+        this.checkViralMoment(game.star);
     }
 
     nextCustomer(): void {
@@ -70,6 +73,7 @@ export class DayManager extends Component {
 
     private handleCustomerLeft = (payload: { currentDesire: number }): void => {
         this.recordCustomerResult(payload.currentDesire);
+        this.trackIntrovertCustomer(payload.currentDesire);
         this.addReputation(this.calculateReputationByDesire(payload.currentDesire));
         this.nextCustomer();
     };
@@ -95,6 +99,17 @@ export class DayManager extends Component {
         stats.satisfiedCustomers += 1;
     }
 
+    private trackIntrovertCustomer(desire: number): void {
+        const customer = this.customersToday[this.currentCustomerIndex];
+        if (!customer || customer.id !== CustomerPersonality.Introvert) {
+            return;
+        }
+
+        if (desire > 40) {
+            GameManager.instance?.incrementIntrovertServed();
+        }
+    }
+
     private calculateReputationByDesire(desire: number): number {
         const baseValue = desire <= 20 ? -50 : desire <= 40 ? -30 : desire <= 60 ? 0 : desire <= 80 ? 20 : 50;
         if (baseValue <= 0) {
@@ -103,6 +118,13 @@ export class DayManager extends Component {
 
         const reputationBoostLevel = GameManager.instance?.getSkillLevel(SkillId.ReputationBoost) ?? 0;
         return Math.round(baseValue * (1 + reputationBoostLevel * 0.25));
+    }
+
+    private checkViralMoment(star: number): void {
+        const range = CUSTOMER_COUNT_BY_STAR[Math.max(1, Math.min(5, star))];
+        if (this.customersToday.length >= range.max) {
+            GameManager.instance?.unlockAchievement(AchievementId.ViralMoment);
+        }
     }
 
     private createCustomersForToday(star: number): CustomerData[] {

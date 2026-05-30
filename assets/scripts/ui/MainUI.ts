@@ -47,11 +47,20 @@ export class MainUI extends Component {
 
         if (this.moneyLabel) this.moneyLabel.string = `资金：${game.money}`;
         if (this.dayLabel) this.dayLabel.string = `第 ${game.day} 天`;
-        if (this.reputationLabel) this.reputationLabel.string = `声望：${game.reputation} / ${game.star}星`;
+        if (this.reputationLabel) this.reputationLabel.string = this.formatReputation(game);
         if (this.phaseLabel) this.phaseLabel.string = `阶段：${game.phase}`;
         this.applyArtAssets();
         this.refreshPhasePanels(game.phase);
     };
+
+    private formatReputation(game: GameManager): string {
+        if (game.star >= 5) {
+            return `声望：${game.reputation}（⭐5 已满级）`;
+        }
+
+        const nextThreshold = game.getNextStarThreshold();
+        return `声望：${game.reputation}/${nextThreshold}（⭐${game.star} → ${game.star + 1}）`;
+    }
 
     private cachePhasePanels(): void {
         const parent = this.node.parent;
