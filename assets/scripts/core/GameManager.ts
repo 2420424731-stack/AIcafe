@@ -57,6 +57,7 @@ export class GameManager extends Component {
     phase = GamePhase.Prep;
     negativeProfitDays = 0;
     skillPoints = 0;
+    introvertServed = 0;
 
     inventory: ProductStock[] = [];
     skills: Partial<Record<SkillId, number>> = {};
@@ -76,6 +77,7 @@ export class GameManager extends Component {
         this.phase = GamePhase.Prep;
         this.negativeProfitDays = 0;
         this.skillPoints = 0;
+        this.introvertServed = 0;
         this.inventory = [];
         this.skills = {};
         this.unlockedAchievements = new Set();
@@ -291,6 +293,18 @@ export class GameManager extends Component {
         return true;
     }
 
+    getNextStarThreshold(): number {
+        if (this.star >= 5) return this.reputation;
+        return [0, 400, 1000, 2500, 5000][this.star];
+    }
+
+    incrementIntrovertServed(): void {
+        this.introvertServed += 1;
+        if (this.introvertServed >= 5) {
+            this.unlockAchievement(AchievementId.IntrovertFriend);
+        }
+    }
+
     private getOrCreateStock(productId: string, price: number): ProductStock {
         let stock = this.inventory.find((item) => item.productId === productId);
         if (!stock) {
@@ -316,6 +330,7 @@ export class GameManager extends Component {
         if (this.star > previousStar) {
             this.skillPoints += this.star - previousStar;
             EventBus.emit(GameEvent.SkillChanged, this);
+            EventBus.emit(GameEvent.StarUpgraded, { previousStar, newStar: this.star });
         }
     }
 

@@ -11,6 +11,7 @@ export enum GameEvent {
     DayEnded = 'day-ended',
     SkillChanged = 'skill-changed',
     AchievementUnlocked = 'achievement-unlocked',
+    StarUpgraded = 'star-upgraded',
 }
 
 export class EventBus {
