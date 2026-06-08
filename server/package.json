@@ -1,12 +1,15 @@
 {
   "name": "aicafe-ai-server",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js",
-    "test:local": "node test-local.js"
+    "dev": "node --watch server.js",
+    "test:local": "node test-local.js",
+    "test:api": "node check-api.js",
+    "test:prompts": "node test-prompts.js",
+    "test:load": "node test-load.js"
   },
   "engines": {
     "node": ">=18"
