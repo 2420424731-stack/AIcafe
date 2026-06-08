@@ -2,8 +2,7 @@ import { _decorator, Component } from 'cc';
 import { GameManager } from '../core/GameManager';
 import type { SellableProductOffer } from '../core/GameManager';
 import { CustomerData, CustomerPersonality } from '../data/CustomerData';
-import { ProductData, PRODUCT_LIST } from '../data/ProductData';
-import { SkillId } from '../data/SkillData';
+import { ProductData } from '../data/ProductData';
 
 const { ccclass, property } = _decorator;
 
@@ -22,14 +21,28 @@ export interface AIResponse {
     reason: string;
 }
 
-interface DesireBreakdown {
-    keyword: number;
-    product: number;
-    price: number;
-    personality: number;
+/** 单轮对话记录 */
+export interface ConversationTurn {
+    role: 'player' | 'customer' | 'system';
+    message: string;
+    desireAfter: number;
+    decision?: PurchaseDecision;
 }
 
-interface ReplyTemplate {
+/** 顾客会话追踪 */
+export interface CustomerSession {
+    customerId: string;
+    customerName: string;
+    turns: ConversationTurn[];
+    startDesire: number;
+    finalDesire: number;
+    finalDecision: PurchaseDecision;
+    purchasedProductId: string | null;
+}
+
+// ── 紧急兜底回复模板（仅 API 彻底失败时使用） ──────────────
+
+interface EmergencyTemplate {
     positive: string[];
     neutral: string[];
     negative: string[];
@@ -37,25 +50,25 @@ interface ReplyTemplate {
     leave: string[];
 }
 
-const REPLY_TEMPLATES: Record<CustomerPersonality, ReplyTemplate> = {
+const EMERGENCY_TEMPLATES: Record<CustomerPersonality, EmergencyTemplate> = {
     [CustomerPersonality.Introvert]: {
-        positive: ['这样说我比较放心，那我可以试试。', '嗯，简单一点挺好的，我想再了解一下。'],
-        neutral: ['嗯……我再想一下。', '可以再简单说一句区别吗？'],
-        negative: ['有点太热情了，我可能不太适应。', '不好意思，我有点紧张。'],
+        positive: ['嗯...这样说我就比较放心了。', '简单一点挺好的，我想再了解一下。'],
+        neutral: ['嗯……我再想一下。', '可以再简单说一句吗？'],
+        negative: ['有点太热情了...我想先冷静一下。', '不好意思，我有点紧张。'],
         buy: ['那我就要这个吧，谢谢。', '听起来比较稳妥，我试试看。'],
         leave: ['不好意思，我还是先不买了。', '我再想想，先走了。'],
     },
     [CustomerPersonality.Expert]: {
-        positive: ['你说得比较具体，听起来还算专业。', '这个描述有细节，我愿意继续听。'],
-        neutral: ['还有没有更明确的口感区别？', '产地、烘焙或者风味能再说清楚一点吗？'],
-        negative: ['这个说法太笼统了，我不太满意。', '如果只是随便推荐，我就没什么兴趣了。'],
+        positive: ['说得挺具体的，听起来还算专业。', '这个描述有细节，我愿意继续听。'],
+        neutral: ['还有没有更明确的口感区别？', '能再说清楚一点吗？'],
+        negative: ['这个说法太笼统了。', '如果只是随便推荐，我就没什么兴趣了。'],
         buy: ['细节说清楚了，那我买这个。', '可以，就按你说的这款来。'],
         leave: ['信息不够准确，我先不买了。', '今天先算了。'],
     },
     [CustomerPersonality.Artistic]: {
         positive: ['这个描述有画面感，我挺喜欢的。', '听起来很适合慢慢喝。'],
         neutral: ['氛围不错，但我还想再感受一下。', '能再讲讲它特别的地方吗？'],
-        negative: ['这样说有点太功利了，我没什么感觉。', '只是催我买的话，我会有点出戏。'],
+        negative: ['这样说有点太功利了。', '我没什么感觉。'],
         buy: ['那就它吧，听起来很有意思。', '这个感觉对了，我想试试。'],
         leave: ['今天的感觉不太对，我先走了。', '我再去别处看看。'],
     },
@@ -85,14 +98,24 @@ const REPLY_TEMPLATES: Record<CustomerPersonality, ReplyTemplate> = {
 @ccclass('AIManager')
 export class AIManager extends Component {
     @property
-    useRealAI = false;
-
-    @property
     apiUrl = '/api/chat';
 
     @property
     aiTimeoutMs = 8000;
 
+    @property
+    maxRetries = 2;
+
+    /** 当前顾客的会话记录 */
+    private _currentSession: CustomerSession | null = null;
+
+    /** 所有已完成会话记录（用于结算页面的回顾展示） */
+    private _completedSessions: CustomerSession[] = [];
+
+    /**
+     * 核心入口：处理玩家消息，返回 AI 响应。
+     * 始终尝试调用真实 AI API，失败时回退到紧急兜底模板。
+     */
     async reply(
         customer: CustomerData,
         playerMessage: string,
@@ -101,24 +124,113 @@ export class AIManager extends Component {
         forceDecision = false,
         turnCount = 0,
     ): Promise<AIResponse> {
-        if (this.useRealAI) {
-            try {
-                return await this.requestRealAIReply(customer, playerMessage, currentDesire, products, forceDecision, turnCount);
-            } catch (error) {
-                console.warn('[AIManager] real AI failed, fallback to local AI.', error);
-            }
+        // 初始化会话（新顾客时）
+        if (!this._currentSession || this._currentSession.customerId !== customer.id) {
+            this._currentSession = {
+                customerId: customer.id,
+                customerName: customer.name,
+                turns: [],
+                startDesire: currentDesire,
+                finalDesire: currentDesire,
+                finalDecision: PurchaseDecision.Pending,
+                purchasedProductId: null,
+            };
         }
 
-        return this.createLocalMockReply(customer, playerMessage, currentDesire, products, forceDecision);
+        try {
+            const response = await this.requestWithRetry(
+                customer,
+                playerMessage,
+                currentDesire,
+                products,
+                forceDecision,
+                turnCount,
+            );
+
+            // 记录会话
+            this.recordTurn(playerMessage, response);
+
+            return response;
+        } catch (error) {
+            console.warn('[AIManager] All AI attempts failed, using emergency fallback.', error);
+            return this.createEmergencyFallback(customer, playerMessage, currentDesire, products, forceDecision);
+        }
     }
 
-    private async requestRealAIReply(
+    /** 获取已完成会话记录（结算页面使用） */
+    get completedSessions(): readonly CustomerSession[] {
+        return this._completedSessions;
+    }
+
+    /** 结束当前顾客会话 */
+    finishCurrentSession(): void {
+        if (this._currentSession) {
+            this._currentSession.finalDesire = this._currentSession.turns.length > 0
+                ? this._currentSession.turns[this._currentSession.turns.length - 1].desireAfter
+                : this._currentSession.startDesire;
+
+            const lastTurn = this._currentSession.turns[this._currentSession.turns.length - 1];
+            this._currentSession.finalDecision = lastTurn?.decision ?? PurchaseDecision.Leave;
+            this._currentSession.purchasedProductId = lastTurn?.decision === PurchaseDecision.Buy
+                ? (lastTurn as any).productId ?? null
+                : null;
+
+            this._completedSessions.push(this._currentSession);
+            this._currentSession = null;
+        }
+    }
+
+    /** 重置所有会话数据（新游戏时调用） */
+    resetSessions(): void {
+        this._currentSession = null;
+        this._completedSessions = [];
+    }
+
+    // ── AI 请求 ────────────────────────────────────────────
+
+    private async requestWithRetry(
         customer: CustomerData,
         playerMessage: string,
         currentDesire: number,
         products: SellableProductOffer[],
         forceDecision: boolean,
         turnCount: number,
+    ): Promise<AIResponse> {
+        let lastError: Error | null = null;
+
+        for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+            try {
+                return await this.requestRealAI(
+                    customer,
+                    playerMessage,
+                    currentDesire,
+                    products,
+                    forceDecision,
+                    turnCount,
+                    attempt,
+                );
+            } catch (error) {
+                lastError = error as Error;
+                console.warn(`[AIManager] Attempt ${attempt + 1}/${this.maxRetries + 1} failed: ${lastError.message}`);
+
+                if (attempt < this.maxRetries) {
+                    // 指数退避：1s, 2s, 4s
+                    await this.delay(1000 * Math.pow(2, attempt));
+                }
+            }
+        }
+
+        throw lastError || new Error('all retry attempts failed');
+    }
+
+    private async requestRealAI(
+        customer: CustomerData,
+        playerMessage: string,
+        currentDesire: number,
+        products: SellableProductOffer[],
+        forceDecision: boolean,
+        turnCount: number,
+        attempt: number,
     ): Promise<AIResponse> {
         const runtime = globalThis as unknown as { fetch?: (url: string, options: Record<string, unknown>) => Promise<any> };
         if (typeof runtime.fetch !== 'function') {
@@ -139,11 +251,13 @@ export class AIManager extends Component {
                 preferredProductTags: customer.preferredProductTags,
                 decisionStyle: customer.decisionStyle,
                 priceSensitivity: customer.priceSensitivity,
+                patience: customer.patience,
             },
             playerMessage,
             currentDesire,
             forceDecision,
             turnCount: Math.max(0, Math.floor(turnCount)),
+            dayNumber: GameManager.instance?.day ?? 1,
             products: products.map((offer) => ({
                 id: offer.product.id,
                 name: offer.product.name,
@@ -156,6 +270,7 @@ export class AIManager extends Component {
             })),
         };
 
+        const timeoutMs = this.aiTimeoutMs + attempt * 2000; // 每次重试增加超时
         const data = await this.withTimeout(
             (async () => {
                 const response = await runtime.fetch!(this.apiUrl, {
@@ -165,31 +280,19 @@ export class AIManager extends Component {
                 });
 
                 if (!response || !response.ok) {
-                    throw new Error(`request failed: ${response?.status ?? 'unknown'}`);
+                    const errorText = await response?.text?.().catch(() => '') ?? '';
+                    throw new Error(`HTTP ${response?.status ?? 'unknown'}: ${errorText.slice(0, 100)}`);
                 }
 
                 return response.json();
             })(),
-            this.aiTimeoutMs,
+            timeoutMs,
         );
 
         return this.parseAIResponse(data, products);
     }
 
-    private withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-        return new Promise((resolve, reject) => {
-            const timer = setTimeout(() => reject(new Error('AI request timeout')), timeoutMs);
-            promise
-                .then((value) => {
-                    clearTimeout(timer);
-                    resolve(value);
-                })
-                .catch((error) => {
-                    clearTimeout(timer);
-                    reject(error);
-                });
-        });
-    }
+    // ── 响应解析 ────────────────────────────────────────────
 
     private parseAIResponse(data: unknown, products: SellableProductOffer[]): AIResponse {
         const source = this.unwrapAIResponse(data);
@@ -217,10 +320,7 @@ export class AIManager extends Component {
     }
 
     private unwrapAIResponse(data: unknown): unknown {
-        if (!data || typeof data !== 'object') {
-            return data;
-        }
-
+        if (!data || typeof data !== 'object') return data;
         const record = data as Record<string, unknown>;
         return record.reply ?? record.result ?? record.response ?? record.data ?? data;
     }
@@ -255,83 +355,174 @@ export class AIManager extends Component {
         return {
             message: response.message,
             desireDelta: Math.round(response.desireDelta),
-            currentDesire: this.clampDesire(response.currentDesire),
+            currentDesire: Math.round(response.currentDesire),
             decision: response.decision,
             productId: response.productId ?? null,
             reason: response.reason,
         };
     }
 
+    // ── 紧急兜底 ────────────────────────────────────────────
+
+    /**
+     * API 彻底失败时的紧急兜底。
+     * 不做欲望计算，只返回模板回复让游戏可以继续。
+     */
+    private createEmergencyFallback(
+        customer: CustomerData,
+        _playerMessage: string,
+        currentDesire: number,
+        products: SellableProductOffer[],
+        forceDecision: boolean,
+    ): AIResponse {
+        const delta = 0; // 兜底不改变欲望值
+        const templates = EMERGENCY_TEMPLATES[customer.id];
+
+        // 强制决策时：高欲望买、低欲望走
+        if (forceDecision) {
+            if (currentDesire >= 50 && products.length > 0) {
+                const product = products[Math.floor(Math.random() * products.length)];
+                return {
+                    message: `${this.pickTemplate(customer, 'buy')} 我要${product.product.name}。`,
+                    desireDelta: delta,
+                    currentDesire,
+                    decision: PurchaseDecision.Buy,
+                    productId: product.product.id,
+                    reason: '紧急兜底：强制决策-购买',
+                };
+            }
+            return {
+                message: this.pickTemplate(customer, 'leave'),
+                desireDelta: delta,
+                currentDesire,
+                decision: PurchaseDecision.Leave,
+                productId: null,
+                reason: '紧急兜底：强制决策-离店',
+            };
+        }
+
+        // 非强制决策：发送中性/正面消息
+        const type = currentDesire >= 50 ? 'positive' : currentDesire <= 25 ? 'negative' : 'neutral';
+        return {
+            message: `[网络波动] ${this.pickTemplate(customer, type)}`,
+            desireDelta: delta,
+            currentDesire,
+            decision: PurchaseDecision.Pending,
+            productId: null,
+            reason: '紧急兜底：AI服务不可用',
+        };
+    }
+
+    private pickTemplate(customer: CustomerData, type: keyof EmergencyTemplate): string {
+        const list = EMERGENCY_TEMPLATES[customer.id][type];
+        return list[Math.floor(Math.random() * list.length)];
+    }
+
+    // ── 会话记录 ────────────────────────────────────────────
+
+    private recordTurn(playerMessage: string, response: AIResponse): void {
+        if (!this._currentSession) return;
+
+        this._currentSession.turns.push({
+            role: 'player',
+            message: playerMessage,
+            desireAfter: response.currentDesire,
+        });
+
+        this._currentSession.turns.push({
+            role: 'customer',
+            message: response.message,
+            desireAfter: response.currentDesire,
+            decision: response.decision,
+        });
+    }
+
+    // ── 开场白 ──────────────────────────────────────────────
+
+    calculateInitialDesire(customer: CustomerData, products: SellableProductOffer[]): number {
+        const availabilityModifier = products.length > 0 ? 0 : -18;
+        const priceModifier = this.calculateInitialPriceModifier(customer, products);
+        return Math.max(0, Math.min(100, Math.round(customer.initialDesire + availabilityModifier + priceModifier)));
+    }
+
+    private calculateInitialPriceModifier(customer: CustomerData, products: SellableProductOffer[]): number {
+        if (products.length === 0) return 0;
+        const total = products.reduce((sum, offer) => {
+            const ratio = offer.price / offer.product.suggestedPrice;
+            if (ratio <= 0.9) return sum + 4;
+            if (ratio <= 1.15) return sum + 3;
+            if (ratio <= 1.3) return sum - 4;
+            if (ratio <= 1.6) return sum - 8;
+            return sum - 14;
+        }, 0);
+        return Math.round((total / products.length) * customer.priceSensitivity);
+    }
+
+    createOpening(customer: CustomerData, desire = customer.initialDesire): string {
+        if (customer.id === CustomerPersonality.Worker) return '你好，我是上班族。我赶时间，想快点买好带走。';
+        if (customer.id === CustomerPersonality.Hesitant) return '你好，我有点不知道选什么，可以帮我推荐吗？';
+        if (desire >= 50) return `你好，我是${customer.displayName}顾客。我想看看今天有什么推荐。`;
+        if (desire >= 40) return `你好，我是${customer.displayName}顾客。第一次来，想了解一下你们店里的咖啡。`;
+        return `你好，我是${customer.displayName}顾客。我想买杯咖啡，简单一点就好。`;
+    }
+
+    // ── 工具方法 ────────────────────────────────────────────
+
+    private withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+        return new Promise((resolve, reject) => {
+            const timer = setTimeout(() => reject(new Error('AI request timeout')), timeoutMs);
+            promise
+                .then((value) => { clearTimeout(timer); resolve(value); })
+                .catch((error) => { clearTimeout(timer); reject(error); });
+        });
+    }
+
+    private delay(ms: number): Promise<void> {
+        return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
     private pickString(record: Record<string, unknown>, keys: string[]): string {
         for (const key of keys) {
             const value = record[key];
-            if (typeof value === 'string' && value.trim()) {
-                return value.trim();
-            }
+            if (typeof value === 'string' && value.trim()) return value.trim();
         }
-
         return '';
     }
 
     private pickNullableString(record: Record<string, unknown>, keys: string[]): string | null {
         for (const key of keys) {
             const value = record[key];
-            if (value === null) {
-                return null;
-            }
-
+            if (value === null) return null;
             if (typeof value === 'string') {
                 const text = value.trim();
-                if (!text || text.toLowerCase() === 'null' || text.toLowerCase() === 'none' || text === '无') {
-                    return null;
-                }
-
+                if (!text || text.toLowerCase() === 'null' || text.toLowerCase() === 'none' || text === '无') return null;
                 return text;
             }
         }
-
         return null;
     }
 
     private pickNumber(record: Record<string, unknown>, keys: string[]): number {
         for (const key of keys) {
             const value = record[key];
-            if (typeof value === 'number') {
-                return value;
-            }
-
-            if (typeof value === 'string' && value.trim()) {
-                return Number(value.replace(/[+＋]/g, '').trim());
-            }
+            if (typeof value === 'number') return value;
+            if (typeof value === 'string' && value.trim()) return Number(value.replace(/[+＋]/g, '').trim());
         }
-
         return Number.NaN;
     }
 
     private normalizeDecision(value: string): PurchaseDecision {
-        if (value.includes('购买') || value.toLowerCase().includes('buy')) {
-            return PurchaseDecision.Buy;
-        }
-
-        if (value.includes('离店') || value.toLowerCase().includes('leave')) {
-            return PurchaseDecision.Leave;
-        }
-
-        if (value.includes('暂不') || value.toLowerCase().includes('pending')) {
-            return PurchaseDecision.Pending;
-        }
-
+        if (value.includes('购买') || value.toLowerCase().includes('buy')) return PurchaseDecision.Buy;
+        if (value.includes('离店') || value.toLowerCase().includes('leave')) return PurchaseDecision.Leave;
+        if (value.includes('暂不') || value.toLowerCase().includes('pending')) return PurchaseDecision.Pending;
         throw new Error('invalid AI decision');
     }
 
     private normalizeProductId(value: string | null, text: string, products: SellableProductOffer[]): string | null {
         if (value) {
             const directMatch = products.find((offer) => offer.product.id === value || offer.product.name === value);
-            if (directMatch) {
-                return directMatch.product.id;
-            }
+            if (directMatch) return directMatch.product.id;
         }
-
         const textMatch = products.find((offer) => text.includes(offer.product.id) || text.includes(offer.product.name));
         return textMatch?.product.id ?? null;
     }
@@ -339,285 +530,5 @@ export class AIManager extends Component {
     private extractLabeledValue(text: string, label: string): string | null {
         const match = text.match(new RegExp(`【${label}】\\s*[:：]?\\s*([^【\\n]+)`));
         return match?.[1]?.trim() ?? null;
-    }
-
-    calculateInitialDesire(customer: CustomerData, products: SellableProductOffer[]): number {
-        const availabilityModifier = products.length > 0 ? 0 : -18;
-        const priceModifier = this.calculatePriceAcceptance(customer, products);
-        return this.clampDesire(customer.initialDesire + availabilityModifier + priceModifier);
-    }
-
-    createOpening(customer: CustomerData, desire = customer.initialDesire): string {
-        return `你好，我是${customer.displayName}顾客。${this.getOpeningByDesire(customer, desire)}`;
-    }
-
-    private createLocalMockReply(
-        customer: CustomerData,
-        playerMessage: string,
-        currentDesire: number,
-        products: SellableProductOffer[],
-        forceDecision: boolean,
-    ): AIResponse {
-        const breakdown = this.calculateDesireBreakdown(customer, playerMessage, products);
-        const delta = this.clampDesireDelta(breakdown.keyword + breakdown.product + breakdown.price + breakdown.personality);
-        const nextDesire = this.clampDesire(currentDesire + delta);
-
-        if (nextDesire <= 20) {
-            return {
-                message: this.pickReply(customer, 'leave'),
-                desireDelta: delta,
-                currentDesire: nextDesire,
-                decision: PurchaseDecision.Leave,
-                productId: null,
-                reason: '购买欲望过低，顾客选择离店',
-            };
-        }
-
-        if (products.length === 0) {
-            return {
-                message: forceDecision ? this.pickReply(customer, 'leave') : this.pickReply(customer, 'neutral'),
-                desireDelta: delta,
-                currentDesire: nextDesire,
-                decision: forceDecision ? PurchaseDecision.Leave : PurchaseDecision.Pending,
-                productId: null,
-                reason: products.length === 0 ? '当前没有可售商品' : '顾客还在考虑',
-            };
-        }
-
-        const decision = this.resolveDecision(customer, nextDesire, forceDecision);
-        if (decision === PurchaseDecision.Buy) {
-            const product = this.pickProductByPreference(customer, products, nextDesire);
-            return {
-                message: `${this.pickReply(customer, 'buy')} 我要${product.product.name}。`,
-                desireDelta: delta,
-                currentDesire: nextDesire,
-                decision: PurchaseDecision.Buy,
-                productId: product.product.id,
-                reason: '购买欲望较高且存在可购买商品',
-            };
-        }
-
-        if (decision === PurchaseDecision.Leave) {
-            return {
-                message: this.pickReply(customer, 'leave'),
-                desireDelta: delta,
-                currentDesire: nextDesire,
-                decision: PurchaseDecision.Leave,
-                productId: null,
-                reason: '最终决策未被说服，顾客离店',
-            };
-        }
-
-        return {
-            message: this.pickReply(customer, delta >= 6 ? 'positive' : delta <= -6 ? 'negative' : 'neutral'),
-            desireDelta: delta,
-            currentDesire: nextDesire,
-            decision: PurchaseDecision.Pending,
-            productId: null,
-            reason: '顾客仍在考虑，等待下一轮对话',
-        };
-    }
-
-    private calculateDesireBreakdown(
-        customer: CustomerData,
-        playerMessage: string,
-        products: SellableProductOffer[],
-    ): DesireBreakdown {
-        const message = playerMessage.toLowerCase();
-        return {
-            keyword: this.scoreKeywords(playerMessage, customer.likesKeywords, 5) - this.scoreKeywords(playerMessage, customer.dislikesKeywords, 8),
-            product: this.scoreProductPreference(customer, message, products),
-            price: this.scorePriceAcceptance(customer, message, products),
-            personality: this.scorePersonalityRule(customer, message, playerMessage.length, products),
-        };
-    }
-
-    private resolveDecision(customer: CustomerData, desire: number, forceDecision: boolean): PurchaseDecision {
-        if (desire >= 85) {
-            return PurchaseDecision.Buy;
-        }
-
-        if (customer.decisionStyle === 'fast_decision' && desire >= 62) {
-            return PurchaseDecision.Buy;
-        }
-
-        if (!forceDecision) {
-            if (customer.decisionStyle === 'guided_choice') {
-                return desire >= 78 && Math.random() < 0.35 ? PurchaseDecision.Buy : PurchaseDecision.Pending;
-            }
-
-            return desire >= 75 && Math.random() < 0.45 ? PurchaseDecision.Buy : PurchaseDecision.Pending;
-        }
-
-        const buyChance = desire <= 40 ? 0.2 : desire <= 60 ? 0.55 : customer.decisionStyle === 'guided_choice' ? 0.75 : 0.9;
-        return Math.random() < buyChance ? PurchaseDecision.Buy : PurchaseDecision.Leave;
-    }
-
-    private scoreKeywords(playerMessage: string, keywords: string[], points: number): number {
-        return keywords.reduce((total, keyword) => playerMessage.includes(keyword) ? total + points : total, 0);
-    }
-
-    private scoreProductPreference(customer: CustomerData, message: string, products: SellableProductOffer[]): number {
-        if (products.length === 0) {
-            return -8;
-        }
-
-        const mentionedOffers = products.filter((offer) => this.mentionsProduct(message, offer.product));
-        const mentionsUnavailable = PRODUCT_LIST.some((product) => !products.some((offer) => offer.product.id === product.id) && this.mentionsProduct(message, product));
-
-        if (mentionsUnavailable) {
-            return -8;
-        }
-
-        if (mentionedOffers.length > 0) {
-            return mentionedOffers.reduce((total, offer) => total + this.countTagMatches(offer.product.tags, customer.preferredProductTags) * 3, 0);
-        }
-
-        if (this.containsAny(message, ['推荐', '适合', '建议', '选', '来一份'])) {
-            return products.some((offer) => this.hasTagOverlap(offer.product.tags, customer.preferredProductTags)) ? 3 : 0;
-        }
-
-        return 0;
-    }
-
-    private scorePriceAcceptance(customer: CustomerData, message: string, products: SellableProductOffer[]): number {
-        const priceScore = this.calculatePriceAcceptance(customer, products);
-        if (priceScore === 0) {
-            return 0;
-        }
-
-        if (this.containsAny(message, ['价格', '售价', '多少钱', '元', '便宜', '划算', '贵'])) {
-            return priceScore;
-        }
-
-        return priceScore < 0 ? Math.ceil(priceScore / 2) : 0;
-    }
-
-    private calculatePriceAcceptance(customer: CustomerData, products: SellableProductOffer[]): number {
-        if (products.length === 0) {
-            return 0;
-        }
-
-        const total = products.reduce((sum, offer) => sum + this.scoreOfferPrice(customer, offer), 0);
-        return Math.round(total / products.length);
-    }
-
-    private scoreOfferPrice(customer: CustomerData, offer: SellableProductOffer): number {
-        const suggestedRatio = offer.price / offer.product.suggestedPrice;
-        const grossMargin = (offer.price - offer.product.cost) / offer.product.cost;
-        let score = 0;
-
-        if (suggestedRatio <= 0.9) score += 4;
-        else if (suggestedRatio <= 1.15) score += 3;
-        else if (suggestedRatio <= 1.3) score -= 4;
-        else if (suggestedRatio <= 1.6) score -= 8;
-        else score -= 14;
-
-        if (grossMargin > 3) score -= 4;
-        if (grossMargin < 0.5) score += 2;
-        return Math.round(score * customer.priceSensitivity);
-    }
-
-    private scorePersonalityRule(
-        customer: CustomerData,
-        message: string,
-        length: number,
-        products: SellableProductOffer[],
-    ): number {
-        switch (customer.id) {
-            case CustomerPersonality.Introvert:
-                return (length <= 50 ? 3 : -2) + ((message.match(/[?？]/g)?.length ?? 0) >= 2 ? -5 : 0);
-            case CustomerPersonality.Expert:
-                return (/[0-9０-９]+/.test(message) || this.containsAny(message, ['分钟', '元', '度', '比例']) ? 3 : 0)
-                    + (this.containsAny(message, ['酸度', '烘焙', '香气', '层次', '产地']) ? 5 : 0);
-            case CustomerPersonality.Artistic:
-                return this.containsAny(message, ['故事', '氛围', '果香', '慢慢喝', '坐下来', '生活']) ? 6 : 0;
-            case CustomerPersonality.Social:
-                return this.containsAny(message, ['哈哈', '熟客', '朋友', '常来', '今天']) ? 6 : length < 8 ? -3 : 0;
-            case CustomerPersonality.Worker:
-                return (length <= 45 ? 5 : -6) + (products.some((offer) => this.isOneOf('fast', offer.product.tags)) && this.containsAny(message, ['快', '马上', '打包']) ? 4 : 0);
-            case CustomerPersonality.Hesitant:
-                return (this.containsAny(message, ['我建议', '直接选', '二选一', '不容易踩雷']) ? 7 : 0)
-                    + (products.filter((offer) => this.mentionsProduct(message, offer.product)).length > 2 ? -6 : 0);
-            default:
-                return 0;
-        }
-    }
-
-    private pickProductByPreference(
-        customer: CustomerData,
-        products: SellableProductOffer[],
-        desire: number,
-    ): SellableProductOffer {
-        const preferredProducts = products.filter((offer) => this.hasTagOverlap(offer.product.tags, customer.preferredProductTags));
-        const candidates = preferredProducts.length > 0 ? preferredProducts : products;
-
-        return this.pickRandomOffer(candidates);
-    }
-
-    private scoreProductPriceTier(offer: SellableProductOffer, desire: number): number {
-        if (desire >= 81) {
-            return offer.price * 0.3;
-        }
-
-        if (desire >= 61) {
-        return offer.price * 0.15;
-        }
-
-        return -offer.price * 0.25;
-    }
-
-    private pickRandomOffer(products: SellableProductOffer[]): SellableProductOffer {
-        return products[Math.floor(Math.random() * products.length)];
-    }
-
-    private pickReply(customer: CustomerData, type: keyof ReplyTemplate): string {
-        const list = REPLY_TEMPLATES[customer.id][type];
-        return list[Math.floor(Math.random() * list.length)];
-    }
-
-    private mentionsProduct(message: string, product: ProductData): boolean {
-        const shortName = product.name
-            .replace('咖啡', '')
-            .replace('原味', '')
-            .replace('春日', '')
-            .trim();
-        return message.includes(product.name) || (!!shortName && message.includes(shortName));
-    }
-
-    private hasTagOverlap(tags: string[], preferredTags: string[]): boolean {
-        return this.countTagMatches(tags, preferredTags) > 0;
-    }
-
-    private countTagMatches(tags: string[], preferredTags: string[]): number {
-        return tags.reduce((total, tag) => total + (this.isOneOf(tag, preferredTags) ? 1 : 0), 0);
-    }
-
-    private containsAny(message: string, keywords: string[]): boolean {
-        return keywords.some((keyword) => message.includes(keyword));
-    }
-
-    private isOneOf(value: string, candidates: string[]): boolean {
-        return candidates.indexOf(value) >= 0;
-    }
-
-    private clampDesireDelta(value: number): number {
-        const eloquenceLevel = GameManager.instance?.getSkillLevel(SkillId.Eloquence) ?? 0;
-        const toleranceLevel = GameManager.instance?.getSkillLevel(SkillId.Tolerance) ?? 0;
-        const positiveCap = 20 + eloquenceLevel * 5;
-        const negativeCap = -20 + toleranceLevel * 4;
-        return Math.max(negativeCap, Math.min(positiveCap, Math.round(value || 1)));
-    }
-
-    private clampDesire(value: number): number {
-        return Math.max(0, Math.min(100, Math.round(value)));
-    }
-
-    private getOpeningByDesire(customer: CustomerData, desire: number): string {
-        if (customer.id === CustomerPersonality.Worker) return '我赶时间，想快点买好带走。';
-        if (customer.id === CustomerPersonality.Hesitant) return '我有点不知道选什么，可以帮我推荐吗？';
-        if (desire >= 50) return '我想看看今天有什么推荐。';
-        if (desire >= 40) return '第一次来，想了解一下你们店里的咖啡。';
-        return '我想买杯咖啡，简单一点就好。';
     }
 }
