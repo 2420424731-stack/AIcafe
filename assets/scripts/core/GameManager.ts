@@ -3,6 +3,8 @@ import { EventBus, GameEvent } from './EventBus';
 import { AchievementId, ACHIEVEMENT_LIST, findAchievement } from '../data/AchievementData';
 import { findProduct, getUnlockedProducts, ProductData } from '../data/ProductData';
 import { findSkill, SkillId, SKILL_LIST } from '../data/SkillData';
+import { SaveManager } from './SaveManager';
+import { SettingsManager } from './SettingsManager';
 
 const { ccclass, property } = _decorator;
 
@@ -80,6 +82,11 @@ export class GameManager extends Component {
         this.skills = {};
         this.unlockedAchievements = new Set();
         this.todayStats = this.createEmptyStats();
+        this.totalCustomers = 0;
+        this.totalRevenue = 0;
+        this.totalDeals = 0;
+        this.totalSpoilageCost = 0;
+        this.playTimeSeconds = 0;
         EventBus.emit(GameEvent.GameStateChanged, this);
     }
 
@@ -205,6 +212,11 @@ export class GameManager extends Component {
         this.checkDayEndAchievements();
         this.negativeProfitDays = this.todayStats.profit < 0 ? this.negativeProfitDays + 1 : 0;
         this.phase = this.shouldGameOver() ? GamePhase.GameOver : GamePhase.Result;
+
+        // 自动存档
+        if (SettingsManager?.get()?.autoSave !== false) {
+            this.autoSave();
+        }
 
         EventBus.emit(GameEvent.DayEnded, this.todayStats);
         EventBus.emit(GameEvent.GameStateChanged, this);
@@ -344,6 +356,72 @@ export class GameManager extends Component {
         if (this.reputation >= 400) return 2;
         return 1;
     }
+
+    /** 游戏是否已结束（失败或胜利） */
+    get isGameOver(): boolean {
+        return this.phase === GamePhase.GameOver;
+    }
+
+    // ── 存档 ──────────────────────────────────────────────
+
+    /** 导出存档数据 */
+    toSaveData() {
+        return {
+            money: this.money,
+            reputation: this.reputation,
+            star: this.star,
+            day: this.day,
+            skillPoints: this.skillPoints,
+            skills: { ...this.skills },
+            inventory: this.inventory.map((s) => ({ productId: s.productId, amount: s.amount, price: s.price })),
+            unlockedAchievements: [...this.unlockedAchievements],
+            negativeProfitDays: this.negativeProfitDays,
+            totalCustomers: this.totalCustomers,
+            totalRevenue: this.totalRevenue,
+            totalDeals: this.totalDeals,
+            totalSpoilageCost: this.totalSpoilageCost,
+            playTimeSeconds: this.playTimeSeconds,
+        };
+    }
+
+    /** 从存档恢复游戏状态 */
+    loadFromSave(data: ReturnType<typeof this.toSaveData>): void {
+        this.money = data.money;
+        this.reputation = data.reputation;
+        this.star = data.star;
+        this.day = data.day;
+        this.skillPoints = data.skillPoints;
+        this.skills = { ...data.skills };
+        this.inventory = data.inventory.map((s) => ({ productId: s.productId, amount: s.amount, price: s.price }));
+        this.unlockedAchievements = new Set(data.unlockedAchievements);
+        this.negativeProfitDays = data.negativeProfitDays;
+        this.totalCustomers = data.totalCustomers ?? 0;
+        this.totalRevenue = data.totalRevenue ?? 0;
+        this.totalDeals = data.totalDeals ?? 0;
+        this.totalSpoilageCost = data.totalSpoilageCost ?? 0;
+        this.playTimeSeconds = data.playTimeSeconds ?? 0;
+        this.phase = GamePhase.Prep;
+        this.todayStats = this.createEmptyStats();
+        EventBus.emit(GameEvent.GameStateChanged, this);
+    }
+
+    /** 自动存档到最近槽位 */
+    autoSave(): void {
+        SaveManager.save(0, this.toSaveData());
+    }
+
+    // ── 累计统计 ──────────────────────────────────────────
+
+    /** 累计顾客数 */
+    totalCustomers = 0;
+    /** 累计营收 */
+    totalRevenue = 0;
+    /** 累计成交数 */
+    totalDeals = 0;
+    /** 累计报废成本 */
+    totalSpoilageCost = 0;
+    /** 游戏时间（秒） */
+    playTimeSeconds = 0;
 
     private shouldGameOver(): boolean {
         const reputationFailed = this.reputation <= 0 && this.day >= REPUTATION_GAME_OVER_START_DAY;
