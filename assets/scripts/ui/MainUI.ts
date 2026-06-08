@@ -1,7 +1,10 @@
 import { _decorator, Color, Component, Label, Node, UITransform } from 'cc';
 import { EventBus, GameEvent } from '../core/EventBus';
 import { GameManager, GamePhase } from '../core/GameManager';
+import { SaveManager } from '../core/SaveManager';
+import { AudioManager, BGMTrack } from '../core/AudioManager';
 import { ArtAssetBinder } from './ArtAssetBinder';
+import { OnboardingUI } from './OnboardingUI';
 
 const { ccclass, property } = _decorator;
 
@@ -28,11 +31,27 @@ export class MainUI extends Component {
     @property(Node)
     resultPanel: Node | null = null;
 
+    @property(OnboardingUI)
+    onboardingUI: OnboardingUI | null = null;
+
+    private _onboardingShown = false;
+
     onEnable(): void {
         EventBus.on(GameEvent.GameStateChanged, this.refresh);
         this.cachePhasePanels();
         this.applyArtAssets();
         this.refresh();
+
+        // 首次运行 → 触发新手引导
+        if (!this._onboardingShown && !SaveManager.hasAnySave()) {
+            this._onboardingShown = true;
+            this.scheduleOnce(() => {
+                this.onboardingUI?.startOnboarding();
+            }, 0.5);
+        }
+
+        // 播放营业 BGM
+        AudioManager.instance?.playBGM(BGMTrack.Gameplay);
     }
 
     onDisable(): void {

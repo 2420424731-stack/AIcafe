@@ -5,6 +5,9 @@ import { GameManager, GamePhase } from '../core/GameManager';
 import { CustomerData } from '../data/CustomerData';
 import { AchievementId } from '../data/AchievementData';
 import { findProduct } from '../data/ProductData';
+import { SettingsManager } from '../core/SettingsManager';
+import { AnimationHelper } from '../core/AnimationHelper';
+import { AudioManager, SFX } from '../core/AudioManager';
 import { ArtAssetBinder } from './ArtAssetBinder';
 import { ChatBubbleUI, ChatRole } from './ChatBubbleUI';
 
@@ -128,6 +131,7 @@ export class ChatUI extends Component {
             const sold = GameManager.instance?.completeSale(response.productId, 1) ?? false;
             const product = findProduct(response.productId);
             this.addBubble(ChatRole.System, sold ? `结果：购买了${product?.name ?? response.productId}` : '结果：未购买');
+            if (sold) AudioManager.instance?.playSFX(SFX.Sale);
             this.finishCurrentCustomer(response.currentDesire);
         }
 
@@ -171,6 +175,7 @@ export class ChatUI extends Component {
         }
 
         this.isResolvingCustomer = true;
+        AudioManager.instance?.playSFX(SFX.CustomerLeave);
         this.scheduleOnce(() => {
             EventBus.emit(GameEvent.CustomerLeft, { currentDesire });
         }, this.resultStaySeconds);
@@ -271,6 +276,14 @@ export class ChatUI extends Component {
         bubble.getComponent(ChatBubbleUI)?.setup(role, content);
         this.scrollBubblesToBottom();
         this.relayoutBubbles();
+
+        // 气泡弹出动画
+        AnimationHelper.animateBubbleIn(bubble, 0.25);
+
+        // 音效
+        if (role === ChatRole.Customer) {
+            AudioManager.instance?.playSFX(SFX.CustomerEnter);
+        }
     }
 
     private handleInputReturn = (): void => {

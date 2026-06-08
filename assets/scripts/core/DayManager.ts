@@ -3,6 +3,7 @@ import { GameManager } from './GameManager';
 import { EventBus, GameEvent } from './EventBus';
 import { CustomerData, getUnlockedCustomers } from '../data/CustomerData';
 import { SkillId } from '../data/SkillData';
+import { AudioManager, SFX } from './AudioManager';
 
 const { ccclass, property } = _decorator;
 
@@ -51,6 +52,7 @@ export class DayManager extends Component {
         this.currentCustomerIndex += 1;
 
         if (this.currentCustomerIndex >= this.customersToday.length) {
+            AudioManager.instance?.playSFX(SFX.DayEnd);
             GameManager.instance?.finishDay(this.reputationDelta);
             return;
         }

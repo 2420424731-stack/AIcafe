@@ -5,6 +5,7 @@ import { findProduct, getUnlockedProducts, ProductData } from '../data/ProductDa
 import { findSkill, SkillId, SKILL_LIST } from '../data/SkillData';
 import { SaveManager } from './SaveManager';
 import { SettingsManager } from './SettingsManager';
+import { AudioManager, BGMTrack, SFX } from './AudioManager';
 
 const { ccclass, property } = _decorator;
 
@@ -213,6 +214,10 @@ export class GameManager extends Component {
         this.negativeProfitDays = this.todayStats.profit < 0 ? this.negativeProfitDays + 1 : 0;
         this.phase = this.shouldGameOver() ? GamePhase.GameOver : GamePhase.Result;
 
+        if (this.phase === GamePhase.GameOver) {
+            AudioManager.instance?.playBGM(BGMTrack.GameOver);
+        }
+
         // 自动存档
         if (SettingsManager?.get()?.autoSave !== false) {
             this.autoSave();
@@ -296,7 +301,14 @@ export class GameManager extends Component {
             EventBus.emit(GameEvent.SkillChanged, this);
         }
 
+        const prevStarForAchievement = this.star;
         this.updateStarFromReputation(this.star);
+
+        AudioManager.instance?.playSFX(SFX.Achievement);
+
+        if (this.star > prevStarForAchievement) {
+            AudioManager.instance?.playSFX(SFX.StarUp);
+        }
 
         EventBus.emit(GameEvent.AchievementUnlocked, achievement);
         EventBus.emit(GameEvent.GameStateChanged, this);
@@ -327,6 +339,7 @@ export class GameManager extends Component {
         this.star = this.calculateStar();
         if (this.star > previousStar) {
             this.skillPoints += this.star - previousStar;
+            AudioManager.instance?.playSFX(SFX.StarUp);
             EventBus.emit(GameEvent.SkillChanged, this);
         }
     }
